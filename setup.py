@@ -58,5 +58,3 @@ setup(
         "Issues": "https://github.com/Tupir/CanvasCTk/issues",
     },
 )
-
-#python .\setup.py sdist bdist_wheel
