@@ -2,8 +2,6 @@
 
 `CanvasCTk` is a standalone CustomTkinter canvas framework.
 
-Origin note: this framework was originally extracted from the XXMI Launcher UI layer.
-
 The public API now uses `Canvas*` names:
 
 ```python
