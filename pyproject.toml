@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CanvasCTk"
+dynamic = ["version"]
+description = "Reusable CustomTkinter canvas UI framework."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Tupi" },
+]
+keywords = [
+    "customtkinter",
+    "tkinter",
+    "canvas",
+    "gui",
+    "widgets",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: User Interfaces",
+]
+dependencies = [
+    "customtkinter>=5.2.2,<6",
+    "Pillow>=10,<13",
+    "imageio[ffmpeg]>=2.34,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/Tupir/CanvasCTk"
+Repository = "https://github.com/Tupir/CanvasCTk"
+Issues = "https://github.com/Tupir/CanvasCTk/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "CanvasCTk.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["CanvasCTk*"]
+exclude = ["examples*"]
+
+[tool.setuptools.package-data]
+CanvasCTk = ["themes/*.json"]
