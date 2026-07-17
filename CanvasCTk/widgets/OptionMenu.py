@@ -157,6 +157,22 @@ class OptionMenu(CanvasCTkWidget):
     def _display(self, value: Any) -> str:
         return str(self._value_map.get(value, value)) if self._value_map is not None else str(value)
 
+    @staticmethod
+    def _fit_display_text(text: str, font: ctk.CTkFont, max_width: int) -> str:
+        if not text or max_width <= 0:
+            return ""
+        if font.measure(text) <= max_width:
+            return text
+
+        low, high = 0, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if font.measure(text[:middle]) <= max_width:
+                low = middle
+            else:
+                high = middle - 1
+        return text[:low]
+
     def _create_bindings(self, sequence: str | None = None) -> None:
         if sequence is None or sequence == "<Enter>":
             self._canvas.bind("<Enter>", self._on_enter, add="+")
@@ -166,10 +182,13 @@ class OptionMenu(CanvasCTkWidget):
             self._canvas.bind("<Button-1>", self._clicked, add="+")
 
     def _draw(self, *_: Any, no_color_updates: bool = False) -> None:
+        display_text = self._display(self._current_value)
+        radius = min(self._corner_radius, self._current_height // 2)
+        padding = max(radius, 3)
         if self._dynamic_resizing:
             self._desired_width = self._current_width = self._width = max(
                 self._base_width,
-                self._font.measure(self._display(self._current_value)) + self._current_height + 10,
+                self._font.measure(display_text) + self._current_height + padding * 2,
             )
         self._canvas.coords(
             self._background_id,
@@ -180,7 +199,6 @@ class OptionMenu(CanvasCTkWidget):
         )
         background = "" if self._bg_color_transparent else self._apply_appearance_mode(self._bg_color)
         self._canvas.itemconfig(self._background_id, fill=background, outline="")
-        radius = min(self._corner_radius, self._current_height // 2)
         left_section_width = self._current_width - self._current_height
         requires_recoloring = self._draw_engine.draw_rounded_rect_with_border_vertical_split(
             self._current_width,
@@ -205,7 +223,6 @@ class OptionMenu(CanvasCTkWidget):
         arrow_color = self._apply_appearance_mode(text_color)
         self._canvas.itemconfig("dropdown_arrow", fill=arrow_color)
 
-        padding = max(radius, 3)
         if self._content_anchor in ("center", "n", "s"):
             x = left_section_width / 2
             text_anchor = "center"
@@ -218,7 +235,11 @@ class OptionMenu(CanvasCTkWidget):
         self._canvas.coords(self._text_id, x, self._current_height / 2)
         self._canvas.itemconfig(
             self._text_id,
-            text=self._display(self._current_value),
+            text=self._fit_display_text(
+                display_text,
+                self._font,
+                max(0, left_section_width - padding * 2),
+            ),
             anchor=text_anchor,
             font=self._font,
             fill=arrow_color,

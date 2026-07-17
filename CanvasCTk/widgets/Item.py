@@ -27,6 +27,7 @@ class Item(Element):
         self._layout_manager = ""
         self._layout_options: dict[str, Any] = {}
         self._grid_remove_options: dict[str, Any] | None = None
+        self._layout_requires_position_before_show = False
         self._is_rendered = False
         self._show_requested = False
         self._ensure_canvas_dispatchers()
@@ -697,6 +698,10 @@ class Item(Element):
     def _register_layout(self, manager: str, options: dict[str, Any]) -> None:
         if manager != "grid":
             self._grid_remove_options = None
+        position_before_show = (
+            self._layout_requires_position_before_show
+            or bool(self._layout_manager)
+        )
         target_host = self._resolve_layout_host(options.get("in_"))
         previous_host = self._layout_host
         if self._layout_manager and previous_host is not target_host:
@@ -707,7 +712,10 @@ class Item(Element):
             self._layout_manager = manager
             self._layout_options = options
             target_host._attach_child_item(self, manager, options)
+            if position_before_show:
+                target_host._relayout_children()
             self._show_from_geometry()
+            self._layout_requires_position_before_show = False
             return None
         registry = self._registry()
         if manager in {"grid", "pack"}:
@@ -721,7 +729,10 @@ class Item(Element):
             registry.append(self)
         self._layout_manager = manager
         self._layout_options = options
+        if position_before_show:
+            self._relayout_canvas()
         self._show_from_geometry()
+        self._layout_requires_position_before_show = False
         self._schedule_canvas_layout()
         return None
 
@@ -1146,6 +1157,8 @@ class Item(Element):
     def _forget_layout(self, hide: bool = True, preserve_grid: bool = False) -> None:
         if self._layout_manager == "grid" and not preserve_grid:
             self._grid_remove_options = None
+        if hide:
+            self._layout_requires_position_before_show = True
         host = self._layout_host
         if host is not None:
             host._forget_child_widget(self, hide=hide)

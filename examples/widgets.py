@@ -126,7 +126,7 @@ class WidgetShowcase(Window):
                 command=lambda: self.note(f"Radio: {radio_var.get()}"),
             ).pack(anchor="w", padx=20, pady=5)
 
-        self.menu = OptionMenu(
+        self.menu = ScrollableDropdown(
             left,
             values={"fast": "Fast", "balanced": "Balanced", "quality": "High quality"},
             command=lambda key: self.note(f"Option key: {key}"),

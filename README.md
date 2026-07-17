@@ -20,6 +20,28 @@ For local development:
 py -m pip install -e .
 ```
 
+Install any missing project dependencies without reinstalling CanvasCTk:
+
+```powershell
+py -m pip install -r requirements.txt
+py -m pip check
+```
+
+## Build and reinstall
+
+Update `__version__` in `CanvasCTk/__init__.py`, then build the wheel and source archive:
+
+```powershell
+py -m pip install --upgrade build
+py -m build
+```
+
+The build artifacts are written to `dist`. Reinstall a built wheel without reinstalling its dependencies:
+
+```powershell
+py -m pip install --force-reinstall --no-deps .\dist\CanvasCTk-<version>-py3-none-any.whl
+```
+
 Video support for `Image(image="video.mp4")` uses ffmpeg through `imageio[ffmpeg]` and is installed with the normal package dependencies.
 
 ## Run examples
@@ -266,6 +288,35 @@ button.set_state_style("hover", target="background", opacity=0.9)
 ```
 
 ## Inputs
+
+`ScrollableDropdown` uses single-choice behavior by default. Enable multiple choices with `multiple_choice=True`:
+
+```python
+menu = ScrollableDropdown(
+    parent,
+    values={"fast": "Fast", "balanced": "Balanced", "quality": "High quality"},
+    multiple_choice=True,
+    command=lambda selected: print(selected),
+)
+menu.set(["fast", "quality"])
+selected = menu.get()
+```
+
+In multiple-choice mode, selecting a row toggles it without closing the popup. `get()` and the command callback return a list. The closed button displays the selected labels separated by commas.
+
+The closed button keeps its configured width in multiple-choice mode. When a Tk variable is supplied, selected values are stored as a Tcl list and are restored when the variable changes:
+
+```python
+selected_var = tk.StringVar(value="fast quality")
+menu = ScrollableDropdown(
+    parent,
+    values=["fast", "balanced", "quality"],
+    variable=selected_var,
+    multiple_choice=True,
+)
+```
+
+Enable the search bar with `search_bar=True`. It filters displayed labels while you type, and its prompt can be customized with `search_placeholder_text="Find an option..."`.
 
 `Entry`:
 

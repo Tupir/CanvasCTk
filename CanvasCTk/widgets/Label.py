@@ -45,9 +45,13 @@ class Label(Item):
     ) -> None:
         super().__init__(master, canvas=canvas, **kwargs)
         theme = ctk.ThemeManager.theme["CTkLabel"]
-        self._requested_width = max(0, int(width))
-        self._requested_height = max(1, int(height))
-        self._width = max(1, self._requested_width)
+        self._configured_width = max(0, int(width))
+        self._configured_height = max(1, int(height))
+        self._requested_width = max(1, self._configured_width)
+        self._requested_height = self._configured_height
+        self._auto_width = True
+        self._auto_height = True
+        self._width = self._requested_width
         self._height = self._requested_height
         self._natural_width = self._width
         self._natural_height = self._height
@@ -317,11 +321,12 @@ class Label(Item):
         dimensions = self._content_dimensions() if dimensions is None else dimensions
         content_width, content_height, _, _ = dimensions
         minimum_height = max(1, content_height + self._pady * 2)
-        natural_height = max(self._requested_height, minimum_height)
+        natural_height = max(self._configured_height, minimum_height)
         edge_padding = min(max(0, self._corner_radius), round(natural_height / 2))
         minimum_width = max(1, content_width + (self._padx + edge_padding) * 2)
-        natural_width = max(self._requested_width, minimum_width)
+        natural_width = max(self._configured_width, minimum_width)
         self._natural_width, self._natural_height = natural_width, natural_height
+        self._requested_width, self._requested_height = natural_width, natural_height
         if not self._layout_manager:
             self._width, self._height = natural_width, natural_height
         return dimensions
@@ -419,14 +424,14 @@ class Label(Item):
         for key, value in kwargs.items():
             if key == "width":
                 value = max(0, int(value))
-                if value == self._requested_width:
+                if value == self._configured_width:
                     continue
-                self._requested_width = value
+                self._configured_width = value
             elif key == "height":
                 value = max(1, int(value))
-                if value == self._requested_height:
+                if value == self._configured_height:
                     continue
-                self._requested_height = value
+                self._configured_height = value
             elif key == "corner_radius":
                 value = int(value)
                 if value == self._corner_radius:
@@ -535,8 +540,8 @@ class Label(Item):
 
     def cget(self, attribute_name: str) -> Any:
         values = {
-            "width": self._requested_width,
-            "height": self._requested_height,
+            "width": self._configured_width,
+            "height": self._configured_height,
             "corner_radius": self._corner_radius,
             "bg_color": self._bg_color,
             "fg_color": self._fg_color,
