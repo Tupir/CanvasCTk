@@ -316,6 +316,21 @@ menu = ScrollableDropdown(
 )
 ```
 
+Use `ListVar` to read and write the selections as a Python list while preserving value types:
+
+```python
+selected_var = ListVar(value=[1, 3])
+menu = ScrollableDropdown(
+    parent,
+    values={1: "One", 2: "Two", 3: "Three"},
+    variable=selected_var,
+    multiple_choice=True,
+)
+
+selected_var.set([2, 3])
+selected = selected_var.get()
+```
+
 Enable the search bar with `search_bar=True`. It filters displayed labels while you type, and its prompt can be customized with `search_placeholder_text="Find an option..."`.
 
 `Entry`:

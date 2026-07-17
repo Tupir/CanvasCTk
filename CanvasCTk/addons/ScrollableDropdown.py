@@ -9,6 +9,7 @@ from typing import Any, Callable
 import customtkinter as ctk
 
 from ..containers import ScrollableFrame
+from ..variables import ListVar
 from ..widgets.Button import Button
 from ..widgets.Entry import Entry
 from ..widgets.OptionMenu import OptionMenu
@@ -135,6 +136,12 @@ class ScrollableDropdown(OptionMenu):
 
     def _create_dropdown_menu(self) -> _ScrollableMenuAdapter:
         return _ScrollableMenuAdapter(self)
+
+    def _display(self, value: Any) -> str:
+        if isinstance(value, list):
+            display = super()._display
+            return ", ".join(display(item) for item in value)
+        return super()._display(value)
 
     def _draw(self, *args: Any, no_color_updates: bool = False) -> None:
         if self._multiple_choice and hasattr(self, "_dynamic_resizing"):
@@ -281,14 +288,17 @@ class ScrollableDropdown(OptionMenu):
         if update_variable and self._variable is not None:
             self._variable_callback_blocked = True
             try:
-                tcl_values = self.tk.call(
-                    "list",
-                    *(str(value) for value in self._selected_values),
-                )
-                serialized_values = str(
-                    self.tk.call("format", "%s", tcl_values)
-                )
-                self._variable.set(serialized_values)
+                if isinstance(self._variable, ListVar):
+                    self._variable.set(self._selected_values)
+                else:
+                    tcl_values = self.tk.call(
+                        "list",
+                        *(str(value) for value in self._selected_values),
+                    )
+                    serialized_values = str(
+                        self.tk.call("format", "%s", tcl_values)
+                    )
+                    self._variable.set(serialized_values)
             finally:
                 self._variable_callback_blocked = False
         self._refresh_selection_borders()

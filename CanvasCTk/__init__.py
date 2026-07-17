@@ -5,6 +5,7 @@ from .dialogs import Dialog, MessageBox, show_canvas_messagebox, show_messagebox
 from .element import Element, ElementBase
 from .theme import THEME_PATH, get_widget_scaling, set_widget_scaling, setup
 from .tooltip import ToolTip
+from .variables import ListVar
 from .widgets import (
     Button,
     Checkbox,
@@ -56,6 +57,7 @@ __all__ = [
     "Item",
     "Label",
     "LabelButton",
+    "ListVar",
     "MessageBox",
     "OptionMenu",
     "ProgressBar",
