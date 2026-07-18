@@ -10,7 +10,7 @@ from customtkinter.windows.widgets.appearance_mode import AppearanceModeTracker
 from ._shared import _appearance_color, _composite_color, _master_background_color
 from .Image import Image
 from .Item import Item
-from .Scrollbar import Scrollbar
+from .Label import Label
 
 
 class Textbox(Item):
@@ -74,8 +74,6 @@ class Textbox(Item):
         self._font = self._coerce_font(font)
         self._opacity = float(opacity)
         self._scrollbars_activated = bool(activate_scrollbars)
-        self._hide_x_scrollbar = True
-        self._hide_y_scrollbar = True
         self.text_variable = text_variable
         self._syncing = False
         self._redraw_pending = True
@@ -99,43 +97,33 @@ class Textbox(Item):
             relief="flat", font=self._apply_font_scaling(self._font), **text_options,
         )
         self._editor_active = False
-        self._display_text_id = self.canvas.create_text(
-            0,
-            0,
-            anchor="nw",
-            text="",
-            state="hidden",
-        )
         physical_x, physical_y = self._physical_point(self._x, self._y)
         self._window_id = self.canvas.create_window(
             physical_x, physical_y, window=self._textbox, anchor="center", state="hidden"
         )
-        self._y_scrollbar = self.put(Scrollbar(
+
+        # Imported lazily to avoid the containers -> widgets import cycle.
+        from ..containers import ScrollableFrame
+
+        self._text_scroller = self.put(ScrollableFrame(
             self,
             canvas=self.canvas,
-            width=16,
-            height=1,
+            width=max(1, self._width - 16),
+            height=self._height,
+            corner_radius=0,
+            border_width=0,
+            bg_color="transparent",
             fg_color="transparent",
-            button_color=self._scrollbar_button_color,
-            button_hover_color=self._scrollbar_button_hover_color,
-            command=self._textbox.yview,
             orientation="vertical",
-            border_spacing=3,
+            hide_scrollbar=not self._scrollbars_activated,
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color=self._scrollbar_button_color,
+            scrollbar_button_hover_color=self._scrollbar_button_hover_color,
+            opacity=0,
         ))
-        self._x_scrollbar = self.put(Scrollbar(
-            self,
-            canvas=self.canvas,
-            width=1,
-            height=16,
-            fg_color="transparent",
-            button_color=self._scrollbar_button_color,
-            button_hover_color=self._scrollbar_button_hover_color,
-            command=self._textbox.xview,
-            orientation="horizontal",
-            border_spacing=3,
-        ))
-        self._y_scrollbar.hide()
-        self._x_scrollbar.hide()
+        self._text_scroller.hide()
+        self._text_scroller._scrollbar.configure(command=self._scroll_rendered_text)
+        self._display_lines: list[Label] = []
         self._textbox.configure(xscrollcommand=self._on_xscroll, yscrollcommand=self._on_yscroll)
         self._font.add_size_configure_callback(self._font_changed)
         self._context_menu = self._build_context_menu()
@@ -143,7 +131,6 @@ class Textbox(Item):
         self._textbox.bind("<KeyRelease>", self._widget_changed, add="+")
         self._textbox.bind("<FocusIn>", self._editor_focus_in, add="+")
         self._textbox.bind("<FocusOut>", self._editor_focus_out, add="+")
-        self.canvas.tag_bind(self._display_text_id, "<Button-1>", self._activate_editor, add="+")
         self.canvas.tag_bind(self._background._image_id, "<Button-1>", self._activate_editor, add="+")
         self._create_scroll_bindings()
         if text_variable is not None:
@@ -216,10 +203,13 @@ class Textbox(Item):
     def _editor_focus_out(self, _: Any = None) -> None:
         self._editor_active = False
         self._sync_canvas_text()
+        first = getattr(self, "_native_y_fraction", (0.0, 1.0))[0]
+        self.after_idle(lambda: self._text_scroller.scroll_to(first))
 
     def _activate_editor(self, _: Any = None) -> str | None:
         if str(self._textbox.cget("state")) == tk.DISABLED:
             return "break"
+        self._textbox.yview_moveto(self._text_scroller._scrollbar.get()[0])
         self._editor_active = True
         self._sync_canvas_text()
         self._textbox.focus_set()
@@ -308,101 +298,126 @@ class Textbox(Item):
         units = self._scroll_units(event)
         if units == 0:
             return "break"
-        self._editor_active = True
-        self._sync_canvas_text()
+        canvas_mode = self._canvas_text_enabled()
         try:
-            self._textbox.focus_set()
-            if int(getattr(event, "state", 0) or 0) & 0x0001:
-                self._textbox.xview_scroll(units, "units")
+            if canvas_mode:
+                self._scroll_rendered_text("scroll", units, "units")
             else:
                 self._textbox.yview_scroll(units, "units")
+                self._editor_active = True
+                self._sync_canvas_text()
+                self._textbox.focus_set()
         except tk.TclError:
             pass
-        self._schedule_scrollbar_refresh()
+        if not canvas_mode:
+            self._schedule_scrollbar_refresh()
         return "break"
 
     def _canvas_text_enabled(self) -> bool:
-        return (
-            self._opacity < 1
-            and not self._editor_active
-            and self._hide_x_scrollbar
-            and self._hide_y_scrollbar
-        )
+        return not self._editor_active
 
-    def _fit_canvas_text(self, text: str, max_height: int) -> str:
-        if not text:
-            return ""
-        self.canvas.itemconfigure(self._display_text_id, text=text)
-        bounds = self.canvas.bbox(self._display_text_id)
-        if bounds is None or bounds[3] - bounds[1] <= max_height:
-            return text
+    def _ensure_display_lines(self, count: int) -> None:
+        wraplength = max(1, getattr(self, "_display_text_width", self._width) - 4)
+        while len(self._display_lines) < count:
+            label = Label(
+                self._text_scroller,
+                width=wraplength,
+                height=1,
+                text="",
+                fg_color="transparent",
+                text_color=self._text_color,
+                font=self._font,
+                anchor="nw",
+                justify="left",
+                wraplength=wraplength,
+                padx=2,
+                pady=0,
+            )
+            label.bind("<Button-1>", self._activate_editor, add="+")
+            self._display_lines.append(label)
 
-        low, high = 0, len(text)
-        while low < high:
-            midpoint = (low + high + 1) // 2
-            self.canvas.itemconfigure(self._display_text_id, text=text[:midpoint])
-            bounds = self.canvas.bbox(self._display_text_id)
-            if bounds is not None and bounds[3] - bounds[1] <= max_height:
-                low = midpoint
-            else:
-                high = midpoint - 1
-        return text[:low]
+    def _scroll_rendered_text(self, action: str, value: Any, units: Any = None) -> None:
+        """Use ScrollableFrame state and align scrolling to complete text lines."""
+        self._text_scroller._update_scrollregion()
+        _, _, _, viewport_height = self._text_scroller._viewport_geometry()
+        maximum = max(0, self._text_scroller._content_extent - viewport_height)
+        if maximum <= 0:
+            self._text_scroller._scroll_offset = 0
+            self._text_scroller._update_scrollregion()
+            return
+
+        boundaries = [0]
+        offset = 0
+        for label in self._display_lines:
+            if label.winfo_manager() != "pack":
+                continue
+            offset += max(1, label._height)
+            if offset < maximum:
+                boundaries.append(offset)
+        if boundaries[-1] != maximum:
+            boundaries.append(maximum)
+
+        current = self._text_scroller._scroll_offset
+        if action == "moveto":
+            target = maximum * max(0.0, min(1.0, float(value)))
+            new_offset = min(boundaries, key=lambda boundary: abs(boundary - target))
+        elif action == "scroll":
+            current_index = min(
+                range(len(boundaries)),
+                key=lambda index: abs(boundaries[index] - current),
+            )
+            new_offset = boundaries[
+                max(0, min(len(boundaries) - 1, current_index + int(value)))
+            ]
+        else:
+            return
+        self._text_scroller._scroll_offset = int(new_offset)
+        self._text_scroller._update_scrollregion()
 
     def _sync_canvas_text(self) -> None:
-        if not hasattr(self, "_display_text_id"):
+        if not hasattr(self, "_text_scroller"):
             return
         show_canvas_text = self._canvas_text_enabled() and self._is_rendered
         if not show_canvas_text:
-            self.canvas.itemconfigure(self._display_text_id, state="hidden")
+            self._text_scroller.hide()
             self.canvas.itemconfigure(
                 self._window_id,
                 state="normal" if self._is_rendered else "hidden",
             )
             return
 
-        left, top = self._winfo_origin()
-        inset = max(self._corner_radius, self._border_width + self._border_spacing)
-        text_width = max(1, getattr(self, "_text_view_width", self._width - inset * 2))
-        text_height = max(1, getattr(self, "_text_view_height", self._height - inset * 2))
-        physical_x, physical_y = self._physical_point(left + inset, top + inset)
-        physical_width = max(1, int(round(self._apply_widget_scaling(text_width))))
-        physical_height = max(1, int(round(self._apply_widget_scaling(text_height))))
-        try:
-            visible_start = self._textbox.index("@0,0")
-        except tk.TclError:
-            visible_start = "1.0"
-        text = self._textbox.get(visible_start, "end-1c")
-        text_color = _appearance_color(self._text_color, "#ffffff")
-        self.canvas.itemconfigure(
-            self._display_text_id,
-            state="normal",
-            fill=text_color,
-            font=self._apply_font_scaling(self._font),
-            width=physical_width,
-        )
-        self.canvas.coords(self._display_text_id, physical_x, physical_y)
-        self.canvas.itemconfigure(
-            self._display_text_id,
-            text=self._fit_canvas_text(text, physical_height),
-        )
+        text = self._textbox.get("1.0", "end-1c")
+        lines = text.split("\n")
+        wraplength = max(1, getattr(self, "_display_text_width", self._width) - 4)
+        self._ensure_display_lines(len(lines))
+        for index, line in enumerate(lines):
+            label = self._display_lines[index]
+            label.configure(
+                text=line if line else " ",
+                text_color=self._text_color,
+                font=self._font,
+                wraplength=wraplength,
+                height=1,
+                pady=0,
+            )
+            if label.winfo_manager() != "pack":
+                label.pack(fill="x", anchor="nw")
+        for label in self._display_lines[len(lines):]:
+            if label.winfo_manager() == "pack":
+                label.pack_forget()
         self.canvas.itemconfigure(self._window_id, state="hidden")
-        self.canvas.tag_raise(self._display_text_id, self._background._image_id)
+        self._text_scroller.show()
+        self.after_idle(self._text_scroller._update_scrollregion)
 
     def _on_yscroll(self, first: str, last: str) -> None:
-        self._y_fraction = (float(first), float(last))
-        self._hide_y_scrollbar = not self._scrollbars_activated or (float(first) <= 0 and float(last) >= 1)
-        self._y_scrollbar.set(*self._y_fraction)
+        self._native_y_fraction = (float(first), float(last))
         if self._external_yscrollcommand is not None:
             self._external_yscrollcommand(first, last)
-        self._schedule_content_layout()
 
     def _on_xscroll(self, first: str, last: str) -> None:
         self._x_fraction = (float(first), float(last))
-        self._hide_x_scrollbar = not self._scrollbars_activated or (float(first) <= 0 and float(last) >= 1)
-        self._x_scrollbar.set(*self._x_fraction)
         if self._external_xscrollcommand is not None:
             self._external_xscrollcommand(first, last)
-        self._schedule_content_layout()
 
     def _schedule_content_layout(self) -> None:
         if self._content_layout_pending or self._destroyed:
@@ -433,29 +448,12 @@ class Textbox(Item):
         except tk.TclError:
             pass
 
-    def _jump_y(self, event: tk.Event) -> None:
-        left, top = self._winfo_origin()
-        inset = max(self._corner_radius, self._border_width + self._border_spacing)
-        available = max(1, self._height - inset * 2)
-        self._textbox.yview_moveto(max(0.0, min(1.0, (event.y - top - inset) / available)))
-
-    def _jump_x(self, event: tk.Event) -> None:
-        left, top = self._winfo_origin()
-        inset = max(self._corner_radius, self._border_width + self._border_spacing)
-        available = max(1, self._width - inset * 2)
-        self._textbox.xview_moveto(max(0.0, min(1.0, (event.x - left - inset) / available)))
-
     def _layout_content(self) -> None:
         left, top = self._winfo_origin()
         inset = max(self._corner_radius, self._border_width + self._border_spacing)
-        bar = 16
-        # An unmapped native Text reports unreliable view fractions. The
-        # canvas-rendered resting view is clipped itself and must not expose
-        # those false scrollbars. Normal scrollbar behavior resumes on focus.
-        hide_y_scrollbar = self._hide_y_scrollbar or self._canvas_text_enabled()
-        hide_x_scrollbar = self._hide_x_scrollbar or self._canvas_text_enabled()
-        text_width = max(1, self._width - inset * 2 - (bar if not hide_y_scrollbar else 0))
-        text_height = max(1, self._height - inset * 2 - (bar if not hide_x_scrollbar else 0))
+        bar = self._text_scroller._scrollbar_thickness if self._scrollbars_activated else 0
+        text_width = max(1, self._width - inset * 2)
+        text_height = max(1, self._height - inset * 2)
         self._text_view_width = text_width
         self._text_view_height = text_height
         physical_x, physical_y = self._physical_point(
@@ -469,19 +467,15 @@ class Textbox(Item):
             height=max(1, int(round(self._apply_widget_scaling(text_height)))),
         )
 
-        if hide_y_scrollbar:
-            self._y_scrollbar.hide()
-        else:
-            self._y_scrollbar.configure(height=text_height)
-            self._y_scrollbar.move(left + self._width - inset - bar / 2, top + inset + text_height / 2)
-            self._y_scrollbar.show()
-
-        if hide_x_scrollbar:
-            self._x_scrollbar.hide()
-        else:
-            self._x_scrollbar.configure(width=text_width)
-            self._x_scrollbar.move(left + inset + text_width / 2, top + self._height - inset - bar / 2)
-            self._x_scrollbar.show()
+        self._text_scroller.hide_scrollbar = not self._scrollbars_activated
+        viewport_width = max(1, text_width - bar)
+        self._display_text_width = viewport_width
+        if (
+            self._text_scroller.cget("width") != viewport_width
+            or self._text_scroller.cget("height") != text_height
+        ):
+            self._text_scroller.configure(width=viewport_width, height=text_height)
+        self._text_scroller.move(left + inset, top + inset)
         self._sync_canvas_text()
 
     def _redraw(self) -> None:
@@ -499,13 +493,10 @@ class Textbox(Item):
             selectbackground=_appearance_color(self._scrollbar_button_color, "#1f6aa5"),
             font=self._apply_font_scaling(self._font),
         )
-        self._y_scrollbar.configure(
-            button_color=self._scrollbar_button_color,
-            button_hover_color=self._scrollbar_button_hover_color,
-        )
-        self._x_scrollbar.configure(
-            button_color=self._scrollbar_button_color,
-            button_hover_color=self._scrollbar_button_hover_color,
+        self._text_scroller.configure(
+            fg_color="transparent",
+            scrollbar_button_color=self._scrollbar_button_color,
+            scrollbar_button_hover_color=self._scrollbar_button_hover_color,
         )
         if not self._is_rendered:
             self._redraw_pending = True
@@ -621,6 +612,42 @@ class Textbox(Item):
         self._widget_changed()
         return result
 
+    def yview(self, *args: Any) -> Any:
+        if not args:
+            if self._canvas_text_enabled():
+                return self._text_scroller._scrollbar.get()
+            return self._textbox.yview()
+        action = str(args[0])
+        value = args[1] if len(args) > 1 else 0
+        units = args[2] if len(args) > 2 else None
+        if self._canvas_text_enabled():
+            self._scroll_rendered_text(action, value, units)
+        if action == "moveto":
+            return self._textbox.yview_moveto(float(value))
+        if action == "scroll":
+            return self._textbox.yview_scroll(int(value), units or "units")
+        return self._textbox.yview(*args)
+
+    def yview_moveto(self, fraction: float) -> Any:
+        if self._canvas_text_enabled():
+            self._text_scroller.scroll_to(fraction)
+        return self._textbox.yview_moveto(fraction)
+
+    def yview_scroll(self, number: int, what: str) -> Any:
+        if self._canvas_text_enabled():
+            self._scroll_rendered_text("scroll", number, what)
+        return self._textbox.yview_scroll(number, what)
+
+    def see(self, index: Any) -> Any:
+        result = self._textbox.see(index)
+        if self._canvas_text_enabled():
+            target = self._textbox.index(index)
+            line = max(1, int(target.split(".")[0]))
+            total = max(1, int(self._textbox.index("end-1c").split(".")[0]))
+            fraction = 1.0 if line >= total else (line - 1) / max(1, total - 1)
+            self.after_idle(lambda: self._text_scroller.scroll_to(fraction))
+        return result
+
     def _build_context_menu(self) -> tk.Menu:
         menu = tk.Menu(self._textbox, tearoff=False)
         menu.add_command(label="Cut", command=lambda: self._textbox.event_generate("<<Cut>>"))
@@ -696,7 +723,7 @@ class Textbox(Item):
             AppearanceModeTracker.remove(self._set_appearance_mode)
             self._appearance_callback_registered = False
         self.canvas.itemconfigure(self._window_id, state="hidden")
-        self.canvas.itemconfigure(self._display_text_id, state="hidden")
+        self._text_scroller.hide()
     def _show(self) -> None:
         self._redraw()
         self._sync_appearance_callback()
@@ -709,7 +736,6 @@ class Textbox(Item):
         self._font.remove_size_configure_callback(self._font_changed)
         self._remove_scroll_bindings()
         self._detach_layout(); self._cleanup_canvas_element()
-        self.canvas.delete(self._display_text_id)
         self.canvas.delete(self._window_id); self._textbox.destroy()
 
 

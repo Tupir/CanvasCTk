@@ -2126,7 +2126,7 @@ class Frame(Item):
         self._background.hide()
         for item_id in self._corner_background_ids:
             self.canvas.itemconfigure(item_id, state="hidden")
-        for widget in self._child_widgets:
+        for widget in tuple(self._child_widgets):
             previous = getattr(widget, "is_hidden", None)
             self._hide_child_widget(widget)
             if previous is not None:
@@ -2146,7 +2146,7 @@ class Frame(Item):
         self._sync_packed_background_shape()
         self._background.show()
         self._sync_background_corners()
-        for widget in self._child_widgets:
+        for widget in tuple(self._child_widgets):
             self._show_child_widget(widget)
 
     def destroy(self) -> None:
