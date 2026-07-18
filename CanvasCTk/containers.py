@@ -216,6 +216,7 @@ class Frame(Item):
         self._layout_pending = False
         self._layout_deferred = False
         self._layout_after_id: str | None = None
+        self._pending_child_hides: IdentityRegistry[Any] = IdentityRegistry()
         self._is_laying_out = False
         self._destroying = False
         self._options: dict[str, Any] = {
@@ -959,6 +960,7 @@ class Frame(Item):
         )
 
     def _attach_child_item(self, widget: Item, manager: str, options: dict[str, Any]) -> None:
+        self._cancel_pending_child_hide(widget)
         self._validate_child_manager(widget, manager)
         if widget not in self._child_widgets:
             self._child_widgets.append(widget)
@@ -1318,6 +1320,7 @@ class Frame(Item):
         widget.destroy = destroy
 
     def _attach_child_widget(self, widget: Any, manager: str, options: dict[str, Any]) -> None:
+        self._cancel_pending_child_hide(widget)
         self._validate_child_manager(widget, manager)
         if widget not in self._child_widgets:
             self._child_widgets.append(widget)
@@ -1334,6 +1337,7 @@ class Frame(Item):
         self._schedule_child_layout()
 
     def _detach_child_widget(self, widget: Any) -> None:
+        self._cancel_pending_child_hide(widget)
         if self._destroying:
             # The complete subtree and its canvas items are already being
             # destroyed. Updating every intermediate registry turns teardown
@@ -1360,8 +1364,20 @@ class Frame(Item):
         layout = self._child_layouts.pop(widget, None)
         self._unaccount_child_layout(widget, layout)
         if hide:
-            self._hide_child_widget(widget)
+            self._defer_child_hide(widget)
         self._schedule_child_layout()
+
+    def _cancel_pending_child_hide(self, widget: Any) -> None:
+        self._pending_child_hides.discard(widget)
+
+    def _defer_child_hide(self, widget: Any) -> None:
+        self._pending_child_hides.add(widget)
+
+    def _flush_pending_child_hides(self) -> None:
+        for widget in tuple(self._pending_child_hides):
+            if widget not in self._child_layouts:
+                self._hide_child_widget(widget)
+        self._pending_child_hides.clear()
 
     def _hide_child_widget(self, widget: Any) -> None:
         if isinstance(widget, Item):
@@ -1431,6 +1447,7 @@ class Frame(Item):
             self._layout_place_children()
         finally:
             self._is_laying_out = False
+        self._flush_pending_child_hides()
 
     def _layout_grid_children(self) -> None:
         children = [
@@ -2136,6 +2153,7 @@ class Frame(Item):
         if self._destroying or self._destroyed:
             return
         self._destroying = True
+        self._pending_child_hides.clear()
         if self._layout_after_id is not None:
             try:
                 self.canvas.after_cancel(self._layout_after_id)

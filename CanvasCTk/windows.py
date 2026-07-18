@@ -668,6 +668,13 @@ class Window(WindowBase, ctk.CTk):
                 f"{position_x:+d}{position_y:+d}"
             )
         self._create_canvas()
+        self.bind_all(
+            "<Button-1>",
+            lambda event: event.widget.focus_set()
+            if hasattr(event.widget, "focus_set")
+            else None,
+            add="+",
+        )
 
     def open(self) -> None:
         self.deiconify()

@@ -695,13 +695,22 @@ class Item(Element):
     def _show_from_geometry(self) -> None:
         self.show()
 
+    def _cancel_layout_hide(self) -> None:
+        pending = getattr(self.canvas, "_canvasctk_pending_layout_hides", None)
+        if pending is not None:
+            pending.discard(self)
+
+    def _defer_layout_hide(self) -> None:
+        pending = getattr(self.canvas, "_canvasctk_pending_layout_hides", None)
+        if not isinstance(pending, IdentityRegistry):
+            pending = IdentityRegistry()
+            self.canvas._canvasctk_pending_layout_hides = pending
+        pending.add(self)
+
     def _register_layout(self, manager: str, options: dict[str, Any]) -> None:
+        self._cancel_layout_hide()
         if manager != "grid":
             self._grid_remove_options = None
-        position_before_show = (
-            self._layout_requires_position_before_show
-            or bool(self._layout_manager)
-        )
         target_host = self._resolve_layout_host(options.get("in_"))
         previous_host = self._layout_host
         if self._layout_manager and previous_host is not target_host:
@@ -712,9 +721,8 @@ class Item(Element):
             self._layout_manager = manager
             self._layout_options = options
             target_host._attach_child_item(self, manager, options)
-            if position_before_show:
-                target_host._relayout_children()
-            self._show_from_geometry()
+            self._show_requested = True
+            self.is_hidden = False
             self._layout_requires_position_before_show = False
             return None
         registry = self._registry()
@@ -729,9 +737,8 @@ class Item(Element):
             registry.append(self)
         self._layout_manager = manager
         self._layout_options = options
-        if position_before_show:
-            self._relayout_canvas()
-        self._show_from_geometry()
+        self._show_requested = True
+        self.is_hidden = False
         self._layout_requires_position_before_show = False
         self._schedule_canvas_layout()
         return None
@@ -1017,13 +1024,15 @@ class Item(Element):
         return self._register_place_layout(options)
 
     def _register_place_layout(self, options: dict[str, Any]) -> None:
+        self._cancel_layout_hide()
         self._grid_remove_options = None
         self._layout_manager = "place"
         self._layout_options = options
 
         if self._canvas_host is not None:
             self._canvas_host._attach_child_item(self, "place", self._layout_options)
-            self._show_from_geometry()
+            self._show_requested = True
+            self.is_hidden = False
             return None
 
         registry = self._registry()
@@ -1086,18 +1095,25 @@ class Item(Element):
         return self
 
     def grid_forget(self) -> None:
+        if self._layout_manager != "grid":
+            return
         self._grid_remove_options = None
         self._forget_layout()
 
     def grid_remove(self) -> None:
-        if self._layout_manager == "grid":
-            self._grid_remove_options = dict(self._layout_options)
+        if self._layout_manager != "grid":
+            return
+        self._grid_remove_options = dict(self._layout_options)
         self._forget_layout(preserve_grid=True)
 
     def pack_forget(self) -> None:
+        if self._layout_manager != "pack":
+            return
         self._forget_layout()
 
     def place_forget(self) -> None:
+        if self._layout_manager != "place":
+            return
         self._forget_layout()
 
     def winfo_manager(self) -> str:
@@ -1173,10 +1189,11 @@ class Item(Element):
         self._layout_options = {}
         self._layout_host = None
         if hide:
-            self.hide()
+            self._defer_layout_hide()
         self._schedule_canvas_layout()
 
     def _detach_layout(self) -> None:
+        self._cancel_layout_hide()
         host = self._layout_host
         if host is not None:
             host._detach_child_widget(self)
@@ -1423,3 +1440,25 @@ class Item(Element):
 
         for item in [item for item in registry if item._layout_manager == "place"]:
             item._apply_place_layout(width, height)
+
+        pending_hides = getattr(
+            self.canvas,
+            "_canvasctk_pending_layout_hides",
+            (),
+        )
+        for item in tuple(pending_hides):
+            if not item._destroyed and not item._layout_manager:
+                item.hide()
+        try:
+            pending_hides.clear()
+        except AttributeError:
+            pass
+
+        for item in registry:
+            if (
+                item._layout_manager
+                and item._show_requested
+                and not item.is_hidden
+                and not item._is_rendered
+            ):
+                item.show()

@@ -113,6 +113,30 @@ class Entry(Item):
         )
         self._font.add_size_configure_callback(self._font_changed)
         self._create_internal_bindings()
+        self.canvas.tag_bind(
+            self._outer_background_id,
+            "<Button-1>",
+            self._activate_editor,
+            add="+",
+        )
+        self.canvas.tag_bind(
+            self._outer_background_id,
+            "<ButtonRelease-1>",
+            self._finish_editor_activation,
+            add="+",
+        )
+        self.canvas.tag_bind(
+            self._background._image_id,
+            "<Button-1>",
+            self._activate_editor,
+            add="+",
+        )
+        self.canvas.tag_bind(
+            self._background._image_id,
+            "<ButtonRelease-1>",
+            self._finish_editor_activation,
+            add="+",
+        )
         self._context_menu = self._build_context_menu()
         if self.input_filter:
             validator = self.validate_int_like_input if self.input_filter == "INT" else self.validate_float_like_input
@@ -190,6 +214,7 @@ class Entry(Item):
         bindings = {
             "<FocusIn>": self._focus_in,
             "<FocusOut>": self._focus_out,
+            "<ButtonRelease-1>": self._finish_editor_activation,
             "<Control-a>": self._select_all,
             "<Button-3>": self.show_context_menu,
             "<Control-z>": lambda _: self._safe_event("<<Undo>>"),
@@ -204,6 +229,24 @@ class Entry(Item):
 
     def _focus_out(self, _: Any = None) -> None:
         self._activate_placeholder()
+
+    def _activate_editor(self, _: Any = None) -> None:
+        if str(self._entry.cget("state")) == tk.DISABLED:
+            return None
+        self._entry.focus_set()
+        return None
+
+    def _finish_editor_activation(self, _: Any = None) -> None:
+        try:
+            if (
+                self._is_rendered
+                and self._entry.winfo_exists()
+                and str(self._entry.cget("state")) != tk.DISABLED
+            ):
+                self._entry.focus_force()
+        except tk.TclError:
+            pass
+        return None
 
     def _activate_placeholder(self) -> None:
         if self._entry.get() == "" and self._placeholder_text is not None and self._textvariable in (None, ""):
