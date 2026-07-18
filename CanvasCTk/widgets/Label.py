@@ -103,6 +103,7 @@ class Label(Item):
             font=self._apply_font_scaling(self._font),
             fill=_appearance_color(self._text_color, "#ffffff"),
             justify=self._justify,
+            state="hidden",
             width=self._apply_widget_scaling(self._wraplength),
         )
         self._font.add_size_configure_callback(self._font_changed)

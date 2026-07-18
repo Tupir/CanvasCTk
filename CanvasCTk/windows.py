@@ -90,7 +90,15 @@ class WindowBase(Element):
     ) -> None:
         Element.__init__(self)
         self.window_title = title
-        self.icon_path = Path(icon_path).expanduser().resolve() if icon_path else None
+        self.resource_root = Path(resource_root or ".").expanduser().resolve()
+        if icon_path:
+            resolved_icon_path = Path(icon_path).expanduser()
+            if not resolved_icon_path.is_absolute():
+                resolved_icon_path = self.resource_root / resolved_icon_path
+            self.icon_path = resolved_icon_path.resolve()
+        else:
+            self.icon_path = None
+        self._icon_image: tk.PhotoImage | None = None
         self.theme_mode = theme_mode if isinstance(theme_mode, ThemeMode) else ThemeMode(str(theme_mode))
         self.window_width = int(width)
         self.window_height = int(height)
@@ -98,7 +106,6 @@ class WindowBase(Element):
         self.locked_width = bool(locked_width)
         self.locked_height = bool(locked_height)
         self.no_titlebar = bool(no_titlebar)
-        self.resource_root = Path(resource_root or ".").resolve()
         self.theme_path: Path | None = None
         self._theme_generation = 0
         self._theme_job: dict[str, Any] | None = None
@@ -115,11 +122,21 @@ class WindowBase(Element):
         )
         if self.no_titlebar:
             self.overrideredirect(True)
-        if self.icon_path:
-            try:
+        self._apply_icon(default=True)
+
+    def _apply_icon(self, default: bool = False) -> None:
+        if self.icon_path is None or not self.icon_path.is_file():
+            return
+        try:
+            if self.icon_path.suffix.lower() == ".ico":
                 self.iconbitmap(str(self.icon_path))
-            except Exception:
-                pass
+            else:
+                self._icon_image = tk.PhotoImage(master=self, file=str(self.icon_path))
+                self.iconphoto(default, self._icon_image)
+                if sys.platform.startswith("win"):
+                    self._iconbitmap_method_called = True
+        except (OSError, tk.TclError):
+            self._icon_image = None
 
     @staticmethod
     def validate_theme(theme: str | Path) -> Path:
@@ -757,11 +774,12 @@ class Toplevel(WindowBase, ctk.CTkToplevel):
         )
         if self.no_titlebar:
             self.overrideredirect(True)
-        if self.icon_path:
-            try:
-                self.iconbitmap(str(self.icon_path))
-            except Exception:
-                pass
+        self._apply_icon()
+        self._canvasctk_icon_after_id = (
+            self.after(250, self._canvasctk_reapply_icon)
+            if self.icon_path is not None
+            else None
+        )
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._track_theme_defaults("CTkToplevel", fg_color=fg_color is None)
         self.canvas = ctk.CTkCanvas(
@@ -780,6 +798,10 @@ class Toplevel(WindowBase, ctk.CTkToplevel):
         self._canvasctk_show_after_id = self.after(
             20, self._canvasctk_show_delayed
         )
+
+    def _canvasctk_reapply_icon(self) -> None:
+        self._canvasctk_icon_after_id = None
+        self._apply_icon()
 
     def _canvasctk_show_from_idle(self) -> None:
         self._canvasctk_show_idle_id = None
@@ -835,7 +857,11 @@ class Toplevel(WindowBase, ctk.CTkToplevel):
     config = configure
 
     def destroy(self) -> None:
-        for attribute in ("_canvasctk_show_idle_id", "_canvasctk_show_after_id"):
+        for attribute in (
+            "_canvasctk_show_idle_id",
+            "_canvasctk_show_after_id",
+            "_canvasctk_icon_after_id",
+        ):
             after_id = getattr(self, attribute, None)
             if after_id is not None:
                 try:

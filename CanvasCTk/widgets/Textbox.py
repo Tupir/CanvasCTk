@@ -145,6 +145,7 @@ class Textbox(Item):
         self._textbox.bind("<FocusOut>", self._editor_focus_out, add="+")
         self.canvas.tag_bind(self._display_text_id, "<Button-1>", self._activate_editor, add="+")
         self.canvas.tag_bind(self._background._image_id, "<Button-1>", self._activate_editor, add="+")
+        self._create_scroll_bindings()
         if text_variable is not None:
             self.set(text_variable.get())
             self.trace_write(text_variable, self._variable_changed)
@@ -224,8 +225,109 @@ class Textbox(Item):
         self._textbox.focus_set()
         return "break"
 
+    def _create_scroll_bindings(self) -> None:
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self._textbox.bind(sequence, self._mouse_scroll_event, add="+")
+        registry = getattr(self.canvas, "_canvasctk_textbox_wheel_registry", None)
+        if registry is None:
+            registry = []
+            self.canvas._canvasctk_textbox_wheel_registry = registry
+            bindtag = f"CanvasCTkTextboxWheel{id(self.canvas)}"
+            self.canvas._canvasctk_textbox_wheel_bindtag = bindtag
+
+            def dispatch(event: Any) -> str | None:
+                for textbox in reversed(tuple(registry)):
+                    if textbox._wheel_event_inside(event):
+                        return textbox._mouse_scroll_event(event)
+                return None
+
+            self.canvas._canvasctk_textbox_wheel_dispatcher = dispatch
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                self.canvas.bind_class(bindtag, sequence, dispatch)
+            bindtags = list(self.canvas.bindtags())
+            if bindtag not in bindtags:
+                bindtags.insert(0, bindtag)
+                self.canvas.bindtags(tuple(bindtags))
+        if self not in registry:
+            registry.append(self)
+
+    def _remove_scroll_bindings(self) -> None:
+        registry = getattr(self.canvas, "_canvasctk_textbox_wheel_registry", None)
+        if registry is None:
+            return
+        if self in registry:
+            registry.remove(self)
+        if registry:
+            return
+        bindtag = getattr(self.canvas, "_canvasctk_textbox_wheel_bindtag", None)
+        if bindtag is not None:
+            try:
+                self.canvas.bindtags(
+                    tuple(tag for tag in self.canvas.bindtags() if tag != bindtag)
+                )
+                for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    self.canvas.unbind_class(bindtag, sequence)
+            except tk.TclError:
+                pass
+        self.canvas._canvasctk_textbox_wheel_registry = None
+        self.canvas._canvasctk_textbox_wheel_bindtag = None
+        self.canvas._canvasctk_textbox_wheel_dispatcher = None
+
+    def _wheel_event_inside(self, event: Any) -> bool:
+        if self._destroyed or not self._is_rendered or self.is_hidden:
+            return False
+        try:
+            pointer_x = int(getattr(event, "x_root", self.canvas.winfo_pointerx()))
+            pointer_y = int(getattr(event, "y_root", self.canvas.winfo_pointery()))
+            left = self.winfo_rootx()
+            top = self.winfo_rooty()
+            return (
+                left <= pointer_x < left + self.winfo_width()
+                and top <= pointer_y < top + self.winfo_height()
+            )
+        except tk.TclError:
+            return False
+
+    @staticmethod
+    def _scroll_units(event: Any) -> int:
+        button = getattr(event, "num", None)
+        if button == 4:
+            return -1
+        if button == 5:
+            return 1
+        delta = int(getattr(event, "delta", 0) or 0)
+        if delta == 0:
+            return 0
+        if abs(delta) >= 120:
+            units = -int(delta / 120)
+            if units:
+                return units
+        return -1 if delta > 0 else 1
+
+    def _mouse_scroll_event(self, event: Any) -> str:
+        units = self._scroll_units(event)
+        if units == 0:
+            return "break"
+        self._editor_active = True
+        self._sync_canvas_text()
+        try:
+            self._textbox.focus_set()
+            if int(getattr(event, "state", 0) or 0) & 0x0001:
+                self._textbox.xview_scroll(units, "units")
+            else:
+                self._textbox.yview_scroll(units, "units")
+        except tk.TclError:
+            pass
+        self._schedule_scrollbar_refresh()
+        return "break"
+
     def _canvas_text_enabled(self) -> bool:
-        return self._opacity < 1 and not self._editor_active
+        return (
+            self._opacity < 1
+            and not self._editor_active
+            and self._hide_x_scrollbar
+            and self._hide_y_scrollbar
+        )
 
     def _fit_canvas_text(self, text: str, max_height: int) -> str:
         if not text:
@@ -265,7 +367,11 @@ class Textbox(Item):
         physical_x, physical_y = self._physical_point(left + inset, top + inset)
         physical_width = max(1, int(round(self._apply_widget_scaling(text_width))))
         physical_height = max(1, int(round(self._apply_widget_scaling(text_height))))
-        text = self._textbox.get("1.0", "end-1c")
+        try:
+            visible_start = self._textbox.index("@0,0")
+        except tk.TclError:
+            visible_start = "1.0"
+        text = self._textbox.get(visible_start, "end-1c")
         text_color = _appearance_color(self._text_color, "#ffffff")
         self.canvas.itemconfigure(
             self._display_text_id,
@@ -601,6 +707,7 @@ class Textbox(Item):
             AppearanceModeTracker.remove(self._set_appearance_mode)
             self._appearance_callback_registered = False
         self._font.remove_size_configure_callback(self._font_changed)
+        self._remove_scroll_bindings()
         self._detach_layout(); self._cleanup_canvas_element()
         self.canvas.delete(self._display_text_id)
         self.canvas.delete(self._window_id); self._textbox.destroy()
